@@ -1,6 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import FXPositionTracker from "../fx-position-tracker.jsx";
+import FXPositionTracker from "./fx-position-tracker.jsx";
 import "./styles.css";
 
 const STORAGE_PREFIX = "fx-tracker:";
