@@ -226,8 +226,21 @@ export default function FXPositionTracker() {
     URL.revokeObjectURL(url);
   };
 
+  const exportJournal = () => {
+    const rows = [...trades]
+      .sort((a, b) => (a.date === b.date ? a.seq - b.seq : a.date < b.date ? -1 : 1))
+      .map((t) => [t.date, t.pair, t.side, t.qty, t.rate].join(", "));
+    const blob = new Blob([rows.join("\n") + (rows.length ? "\n" : "")], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "fx-trade-journal.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const sortedTrades = useMemo(
-    () => [...trades].sort((a, b) => (a.date === b.date ? a.seq - b.seq : a.date < b.date ? -1 : 1)),
+    () => [...trades].sort((a, b) => (a.date === b.date ? b.seq - a.seq : a.date < b.date ? 1 : -1)),
     [trades]
   );
 
@@ -397,9 +410,14 @@ export default function FXPositionTracker() {
           <h2 style={{ fontFamily: "'Instrument Serif', serif", fontStyle: "italic", fontWeight: 400, fontSize: 22, margin: 0, color: "#E8EDF2" }}>
             Trade ledger
           </h2>
-          <button onClick={exportCSV} disabled={!allRealized.length} style={{ ...inputStyle, background: "transparent", color: allRealized.length ? C.amber : C.faint, padding: "6px 14px" }}>
-            Export realized lots (§988 CSV)
-          </button>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <button onClick={exportJournal} disabled={!trades.length} style={{ ...inputStyle, background: "transparent", color: trades.length ? C.amber : C.faint, padding: "6px 14px" }}>
+              Export journal
+            </button>
+            <button onClick={exportCSV} disabled={!allRealized.length} style={{ ...inputStyle, background: "transparent", color: allRealized.length ? C.amber : C.faint, padding: "6px 14px" }}>
+              Export realized lots (§988 CSV)
+            </button>
+          </div>
         </div>
         <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 6, overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
