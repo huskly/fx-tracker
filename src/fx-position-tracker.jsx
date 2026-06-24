@@ -331,6 +331,18 @@ export default function FXPositionTracker() {
 
   const deleteTrade = (id) => setTrades((ts) => ts.filter((t) => t.id !== id));
 
+  const clearLedger = () => {
+    if (!trades.length) return;
+    const ok = window.confirm(
+      "Clear the full ledger? This deletes all trades and spot rates from this browser.",
+    );
+    if (!ok) return;
+    setTrades([]);
+    setSpots({});
+    setImportText("");
+    setImportMsg("");
+  };
+
   const runImport = () => {
     const lines = importText
       .split("\n")
@@ -938,6 +950,19 @@ export default function FXPositionTracker() {
               }}
             >
               Export realized lots (§988 CSV)
+            </button>
+            <button
+              onClick={clearLedger}
+              disabled={!trades.length}
+              style={{
+                ...inputStyle,
+                background: "transparent",
+                color: trades.length ? C.red : C.faint,
+                borderColor: trades.length ? C.red : C.border,
+                padding: "6px 14px",
+              }}
+            >
+              Clear ledger
             </button>
           </div>
         </div>
