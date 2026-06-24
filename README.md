@@ -5,14 +5,14 @@ Static React app for tracking FX positions and FIFO realized lots.
 ## Run locally
 
 ```sh
-npm install
-npm run dev
+yarn install
+yarn dev
 ```
 
 ## Build
 
 ```sh
-npm run build
+yarn build
 ```
 
 The static site is emitted to `dist/`. Deploy that directory to any static host.
@@ -20,5 +20,5 @@ The static site is emitted to `dist/`. Deploy that directory to any static host.
 ## Preview the production build
 
 ```sh
-npm run preview
+yarn preview
 ```

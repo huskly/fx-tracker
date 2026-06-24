@@ -14,7 +14,9 @@ import { useState, useEffect, useMemo } from "react";
 function computePair(trades, pair, spot) {
   const sorted = [...trades]
     .filter((t) => t.pair === pair)
-    .sort((a, b) => (a.date === b.date ? a.seq - b.seq : a.date < b.date ? -1 : 1));
+    .sort((a, b) =>
+      a.date === b.date ? a.seq - b.seq : a.date < b.date ? -1 : 1,
+    );
 
   const lots = []; // open lots: { qty signed, rate, date, commPerUnit (USD/base unit) }
   const realized = []; // closed lots
@@ -24,7 +26,11 @@ function computePair(trades, pair, spot) {
     const tComm = Number.isFinite(t.comm) ? t.comm : 0;
     const tCommPerUnit = t.qty > 0 ? tComm / t.qty : 0; // USD per base unit for this trade
     // close against opposite-sign lots, FIFO
-    while (Math.abs(q) > 1e-9 && lots.length && Math.sign(lots[0].qty) !== Math.sign(q)) {
+    while (
+      Math.abs(q) > 1e-9 &&
+      lots.length &&
+      Math.sign(lots[0].qty) !== Math.sign(q)
+    ) {
       const lot = lots[0];
       const closeQty = Math.min(Math.abs(q), Math.abs(lot.qty));
       const dir = Math.sign(lot.qty); // +1 closing a long, -1 closing a short
@@ -52,7 +58,13 @@ function computePair(trades, pair, spot) {
       q += closeQty * dir;
       if (Math.abs(lot.qty) < 1e-9) lots.shift();
     }
-    if (Math.abs(q) > 1e-9) lots.push({ qty: q, rate: t.rate, date: t.date, commPerUnit: tCommPerUnit });
+    if (Math.abs(q) > 1e-9)
+      lots.push({
+        qty: q,
+        rate: t.rate,
+        date: t.date,
+        commPerUnit: tCommPerUnit,
+      });
   }
 
   const netQty = lots.reduce((s, l) => s + l.qty, 0);
@@ -71,17 +83,29 @@ function computePair(trades, pair, spot) {
   const realizedQuote = realized.reduce((s, r) => s + r.pnlQuote, 0);
   const realizedUSD = realized.reduce((s, r) => s + (r.pnlUSD ?? 0), 0); // gross of commission
   const closedComm = realized.reduce((s, r) => s + (r.commUSD ?? 0), 0); // comm on closed lots
-  const realizedUSDNet = realized.reduce((s, r) => s + (r.pnlUSDNet ?? r.pnlUSD ?? 0), 0);
+  const realizedUSDNet = realized.reduce(
+    (s, r) => s + (r.pnlUSDNet ?? r.pnlUSD ?? 0),
+    0,
+  );
   // entry commission still attached to open lots — sunk, but not yet realized
-  const openComm = lots.reduce((s, l) => s + (l.commPerUnit || 0) * Math.abs(l.qty), 0);
-  const totalComm = sorted.reduce((s, t) => s + (Number.isFinite(t.comm) ? t.comm : 0), 0);
+  const openComm = lots.reduce(
+    (s, l) => s + (l.commPerUnit || 0) * Math.abs(l.qty),
+    0,
+  );
+  const totalComm = sorted.reduce(
+    (s, t) => s + (Number.isFinite(t.comm) ? t.comm : 0),
+    0,
+  );
 
   // Net cash in the quote currency: the other leg of the position, signed.
   // BUY base pays quote (−), SELL base receives quote (+). This is the actual
   // broker balance for the quote ccy (realized quote P&L stays parked here,
   // offsetting the short), unlike the open lots which carry at original cost.
   // Commission is charged in USD, not the quote ccy, so it does NOT touch this.
-  const netQuoteCash = sorted.reduce((s, t) => s + (t.side === "SELL" ? 1 : -1) * t.qty * t.rate, 0);
+  const netQuoteCash = sorted.reduce(
+    (s, t) => s + (t.side === "SELL" ? 1 : -1) * t.qty * t.rate,
+    0,
+  );
 
   return {
     netQty,
@@ -134,8 +158,14 @@ function estimateComm(pair, qty, rate) {
 const fmt = (n, d = 0) =>
   n === null || n === undefined || isNaN(n)
     ? "—"
-    : n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
-const fmtSigned = (n, d = 0) => (n === null || n === undefined || isNaN(n) ? "—" : (n > 0 ? "+" : "") + fmt(n, d));
+    : n.toLocaleString("en-US", {
+        minimumFractionDigits: d,
+        maximumFractionDigits: d,
+      });
+const fmtSigned = (n, d = 0) =>
+  n === null || n === undefined || isNaN(n)
+    ? "—"
+    : (n > 0 ? "+" : "") + fmt(n, d);
 
 const C = {
   bg: "#0B0E13",
@@ -150,7 +180,8 @@ const C = {
   amber: "#E5B45B",
 };
 
-const pnlColor = (n) => (n === null || n === undefined || isNaN(n) ? C.dim : n >= 0 ? C.green : C.red);
+const pnlColor = (n) =>
+  n === null || n === undefined || isNaN(n) ? C.dim : n >= 0 ? C.green : C.red;
 
 // ---------- component ----------
 export default function FXPositionTracker() {
@@ -181,7 +212,11 @@ export default function FXPositionTracker() {
           const migrated = (data.trades || []).map((t) =>
             "comm" in t
               ? t
-              : { ...t, comm: estimateComm(t.pair, t.qty, t.rate) ?? 0, commEst: true }
+              : {
+                  ...t,
+                  comm: estimateComm(t.pair, t.qty, t.rate) ?? 0,
+                  commEst: true,
+                },
           );
           setTrades(migrated);
           setSpots(data.spots || {});
@@ -199,7 +234,10 @@ export default function FXPositionTracker() {
     if (!loaded) return;
     (async () => {
       try {
-        await window.storage.set("fx-tracker-v1", JSON.stringify({ trades, spots }));
+        await window.storage.set(
+          "fx-tracker-v1",
+          JSON.stringify({ trades, spots }),
+        );
       } catch (e) {
         setStorageOk(false);
       }
@@ -213,12 +251,18 @@ export default function FXPositionTracker() {
 
   const results = useMemo(() => {
     const out = {};
-    for (const p of pairs) out[p] = computePair(trades, p, parseFloat(spots[p]) || 0);
+    for (const p of pairs)
+      out[p] = computePair(trades, p, parseFloat(spots[p]) || 0);
     return out;
   }, [trades, pairs, spots]);
 
   const totals = useMemo(() => {
-    let gross = 0, net = 0, comm = 0, paid = 0, unreal = 0, unrealKnown = true;
+    let gross = 0,
+      net = 0,
+      comm = 0,
+      paid = 0,
+      unreal = 0,
+      unrealKnown = true;
     for (const p of pairs) {
       const r = results[p];
       gross += r.realizedUSD ?? 0;
@@ -234,8 +278,11 @@ export default function FXPositionTracker() {
   }, [results, pairs]);
 
   const allRealized = useMemo(
-    () => pairs.flatMap((p) => results[p].realized).sort((a, b) => (a.closeDate < b.closeDate ? -1 : 1)),
-    [results, pairs]
+    () =>
+      pairs
+        .flatMap((p) => results[p].realized)
+        .sort((a, b) => (a.closeDate < b.closeDate ? -1 : 1)),
+    [results, pairs],
   );
 
   // live commission hint for the add-trade form
@@ -250,9 +297,12 @@ export default function FXPositionTracker() {
   const addTrade = () => {
     const qty = parseFloat(String(form.qty).replace(/,/g, ""));
     const rate = parseFloat(form.rate);
-    if (!form.date || !form.pair || !qty || qty <= 0 || !rate || rate <= 0) return;
+    if (!form.date || !form.pair || !qty || qty <= 0 || !rate || rate <= 0)
+      return;
     const pair = form.pair.toUpperCase().trim();
-    const commRaw = String(form.comm ?? "").replace(/,/g, "").trim();
+    const commRaw = String(form.comm ?? "")
+      .replace(/,/g, "")
+      .trim();
     let comm, commEst;
     if (commRaw === "") {
       comm = estimateComm(pair, qty, rate) ?? 0;
@@ -264,7 +314,17 @@ export default function FXPositionTracker() {
     }
     setTrades((ts) => [
       ...ts,
-      { id: Date.now() + Math.random(), seq: ts.length, date: form.date, pair, side: form.side, qty, rate, comm, commEst },
+      {
+        id: Date.now() + Math.random(),
+        seq: ts.length,
+        date: form.date,
+        pair,
+        side: form.side,
+        qty,
+        rate,
+        comm,
+        commEst,
+      },
     ]);
     setForm((f) => ({ ...f, qty: "", rate: "", comm: "" }));
   };
@@ -272,18 +332,30 @@ export default function FXPositionTracker() {
   const deleteTrade = (id) => setTrades((ts) => ts.filter((t) => t.id !== id));
 
   const runImport = () => {
-    const lines = importText.split("\n").map((l) => l.trim()).filter(Boolean);
+    const lines = importText
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
     const parsed = [];
     const errors = [];
     lines.forEach((line, i) => {
-      const parts = line.split(/[,\t]+|\s{1,}/).map((s) => s.trim()).filter(Boolean);
+      const parts = line
+        .split(/[,\t]+|\s{1,}/)
+        .map((s) => s.trim())
+        .filter(Boolean);
       if (parts.length < 5) return errors.push(i + 1);
       const [date, pairRaw, side, qtyS, rateS, commS] = parts;
       const pair = pairRaw.toUpperCase();
       const qty = parseFloat(qtyS.replace(/,/g, ""));
       const rate = parseFloat(rateS);
       const sideN = side.toUpperCase();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !pair.includes(".") || !["BUY", "SELL"].includes(sideN) || !qty || !rate) {
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+        !pair.includes(".") ||
+        !["BUY", "SELL"].includes(sideN) ||
+        !qty ||
+        !rate
+      ) {
         return errors.push(i + 1);
       }
       let comm, commEst;
@@ -305,12 +377,18 @@ export default function FXPositionTracker() {
     if (parsed.length) {
       setTrades((ts) => [
         ...ts,
-        ...parsed.map((p, j) => ({ ...p, id: Date.now() + j + Math.random(), seq: ts.length + j })),
+        ...parsed.map((p, j) => ({
+          ...p,
+          id: Date.now() + j + Math.random(),
+          seq: ts.length + j,
+        })),
       ]);
     }
     setImportMsg(
       `${parsed.length} trade${parsed.length === 1 ? "" : "s"} imported` +
-        (errors.length ? ` · skipped line${errors.length === 1 ? "" : "s"} ${errors.join(", ")}` : "")
+        (errors.length
+          ? ` · skipped line${errors.length === 1 ? "" : "s"} ${errors.join(", ")}`
+          : ""),
     );
     if (parsed.length) setImportText("");
   };
@@ -332,9 +410,11 @@ export default function FXPositionTracker() {
         (r.exitComm ?? 0).toFixed(2),
         (r.commUSD ?? 0).toFixed(2),
         r.pnlUSDNet === null ? "" : r.pnlUSDNet.toFixed(2),
-      ].join(",")
+      ].join(","),
     );
-    const blob = new Blob([header + "\n" + rows.join("\n")], { type: "text/csv" });
+    const blob = new Blob([header + "\n" + rows.join("\n")], {
+      type: "text/csv",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -345,9 +425,22 @@ export default function FXPositionTracker() {
 
   const exportJournal = () => {
     const rows = [...trades]
-      .sort((a, b) => (a.date === b.date ? a.seq - b.seq : a.date < b.date ? -1 : 1))
-      .map((t) => [t.date, t.pair, t.side, t.qty, t.rate, Number.isFinite(t.comm) ? t.comm : 0].join(", "));
-    const blob = new Blob([rows.join("\n") + (rows.length ? "\n" : "")], { type: "text/plain" });
+      .sort((a, b) =>
+        a.date === b.date ? a.seq - b.seq : a.date < b.date ? -1 : 1,
+      )
+      .map((t) =>
+        [
+          t.date,
+          t.pair,
+          t.side,
+          t.qty,
+          t.rate,
+          Number.isFinite(t.comm) ? t.comm : 0,
+        ].join(", "),
+      );
+    const blob = new Blob([rows.join("\n") + (rows.length ? "\n" : "")], {
+      type: "text/plain",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -357,8 +450,11 @@ export default function FXPositionTracker() {
   };
 
   const sortedTrades = useMemo(
-    () => [...trades].sort((a, b) => (a.date === b.date ? b.seq - a.seq : a.date < b.date ? 1 : -1)),
-    [trades]
+    () =>
+      [...trades].sort((a, b) =>
+        a.date === b.date ? b.seq - a.seq : a.date < b.date ? 1 : -1,
+      ),
+    [trades],
   );
 
   const inputStyle = {
@@ -373,7 +469,14 @@ export default function FXPositionTracker() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'JetBrains Mono', monospace" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        background: C.bg,
+        color: C.text,
+        fontFamily: "'JetBrains Mono', monospace",
+      }}
+    >
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;700&display=swap');
         input:focus, select:focus, textarea:focus { border-color: ${C.amber} !important; }
@@ -381,48 +484,116 @@ export default function FXPositionTracker() {
         ::placeholder { color: ${C.faint}; }
       `}</style>
 
-      <div style={{ maxWidth: 1060, margin: "0 auto", padding: "32px 24px 64px" }}>
+      <div
+        style={{ maxWidth: 1060, margin: "0 auto", padding: "32px 24px 64px" }}
+      >
         {/* header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", borderBottom: `1px solid ${C.border}`, paddingBottom: 18, flexWrap: "wrap", gap: 16 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            borderBottom: `1px solid ${C.border}`,
+            paddingBottom: 18,
+            flexWrap: "wrap",
+            gap: 16,
+          }}
+        >
           <div>
-            <h1 style={{ fontFamily: "'Instrument Serif', serif", fontStyle: "italic", fontWeight: 400, fontSize: 34, margin: 0, color: "#E8EDF2" }}>
+            <h1
+              style={{
+                fontFamily: "'Instrument Serif', serif",
+                fontStyle: "italic",
+                fontWeight: 400,
+                fontSize: 34,
+                margin: 0,
+                color: "#E8EDF2",
+              }}
+            >
               FX Positions
             </h1>
-            <div style={{ fontSize: 11, color: C.dim, marginTop: 4, letterSpacing: "0.08em" }}>
-              FIFO LOTS · §988 LEDGER · NET OF IBKR COMM · {trades.length} TRADE{trades.length === 1 ? "" : "S"}
+            <div
+              style={{
+                fontSize: 11,
+                color: C.dim,
+                marginTop: 4,
+                letterSpacing: "0.08em",
+              }}
+            >
+              FIFO LOTS · §988 LEDGER · NET OF IBKR COMM · {trades.length} TRADE
+              {trades.length === 1 ? "" : "S"}
             </div>
           </div>
           <div style={{ display: "flex", gap: 28, textAlign: "right" }}>
             <div>
-              <div style={{ fontSize: 10, color: C.dim, letterSpacing: "0.1em" }}>REALIZED · NET (USD)</div>
-              <div style={{ fontSize: 20, color: pnlColor(totals.net) }}>{fmtSigned(totals.net, 0)}</div>
-              <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>gross {fmtSigned(totals.gross, 0)}</div>
+              <div
+                style={{ fontSize: 10, color: C.dim, letterSpacing: "0.1em" }}
+              >
+                REALIZED · NET (USD)
+              </div>
+              <div style={{ fontSize: 20, color: pnlColor(totals.net) }}>
+                {fmtSigned(totals.net, 0)}
+              </div>
+              <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>
+                gross {fmtSigned(totals.gross, 0)}
+              </div>
             </div>
             <div>
-              <div style={{ fontSize: 10, color: C.dim, letterSpacing: "0.1em" }}>COMMISSIONS (USD)</div>
-              <div style={{ fontSize: 20, color: C.amber }}>{totals.comm ? `−${fmt(totals.comm, 0)}` : "—"}</div>
-              <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>paid {fmt(totals.paid, 0)}</div>
+              <div
+                style={{ fontSize: 10, color: C.dim, letterSpacing: "0.1em" }}
+              >
+                COMMISSIONS (USD)
+              </div>
+              <div style={{ fontSize: 20, color: C.amber }}>
+                {totals.comm ? `−${fmt(totals.comm, 0)}` : "—"}
+              </div>
+              <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>
+                paid {fmt(totals.paid, 0)}
+              </div>
             </div>
             <div>
-              <div style={{ fontSize: 10, color: C.dim, letterSpacing: "0.1em" }}>UNREALIZED (USD)</div>
+              <div
+                style={{ fontSize: 10, color: C.dim, letterSpacing: "0.1em" }}
+              >
+                UNREALIZED (USD)
+              </div>
               <div style={{ fontSize: 20, color: pnlColor(totals.unreal) }}>
                 {totals.unrealKnown ? fmtSigned(totals.unreal, 0) : "set spots"}
               </div>
-              <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>excl. exit comm</div>
+              <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>
+                excl. exit comm
+              </div>
             </div>
           </div>
         </div>
 
         {!storageOk && (
           <div style={{ marginTop: 12, fontSize: 12, color: C.amber }}>
-            Persistent storage unavailable — data lives in this session only. Export CSV before closing.
+            Persistent storage unavailable — data lives in this session only.
+            Export CSV before closing.
           </div>
         )}
 
         {/* position cards */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(310px, 1fr))", gap: 14, marginTop: 22 }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(310px, 1fr))",
+            gap: 14,
+            marginTop: 22,
+          }}
+        >
           {pairs.length === 0 && (
-            <div style={{ gridColumn: "1/-1", border: `1px dashed ${C.border}`, borderRadius: 6, padding: 28, color: C.dim, fontSize: 13 }}>
+            <div
+              style={{
+                gridColumn: "1/-1",
+                border: `1px dashed ${C.border}`,
+                borderRadius: 6,
+                padding: 28,
+                color: C.dim,
+                fontSize: 13,
+              }}
+            >
               No trades yet. Add one below, or paste your journal via Import.
             </div>
           )}
@@ -431,21 +602,61 @@ export default function FXPositionTracker() {
             const open = r.avgCost !== null;
             const qc = quoteCcy(p);
             return (
-              <div key={p} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 6, padding: "16px 18px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "0.04em" }}>{p}</span>
-                  <span style={{ fontSize: 10, color: open ? C.amber : C.dim, letterSpacing: "0.1em" }}>
+              <div
+                key={p}
+                style={{
+                  background: C.panel,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 6,
+                  padding: "16px 18px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 15,
+                      fontWeight: 700,
+                      letterSpacing: "0.04em",
+                    }}
+                  >
+                    {p}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      color: open ? C.amber : C.dim,
+                      letterSpacing: "0.1em",
+                    }}
+                  >
                     {open ? (r.netQty > 0 ? "LONG" : "SHORT") : "FLAT"}
                   </span>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 16px", marginTop: 14, fontSize: 13 }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "10px 16px",
+                    marginTop: 14,
+                    fontSize: 13,
+                  }}
+                >
                   <div>
-                    <div style={{ fontSize: 10, color: C.dim }}>POSITION ({baseCcy(p)})</div>
+                    <div style={{ fontSize: 10, color: C.dim }}>
+                      POSITION ({baseCcy(p)})
+                    </div>
                     <div>{open ? fmt(r.netQty, 0) : "—"}</div>
                   </div>
                   <div>
-                    <div style={{ fontSize: 10, color: C.dim }}>BALANCE ({qc})</div>
+                    <div style={{ fontSize: 10, color: C.dim }}>
+                      BALANCE ({qc})
+                    </div>
                     <div>{open ? fmtSigned(r.netQuoteCash, 0) : "—"}</div>
                   </div>
                   <div>
@@ -456,34 +667,62 @@ export default function FXPositionTracker() {
                   <div>
                     <div style={{ fontSize: 10, color: C.dim }}>SPOT</div>
                     <input
-                      style={{ ...inputStyle, width: "100%", padding: "4px 8px", marginTop: 2 }}
+                      style={{
+                        ...inputStyle,
+                        width: "100%",
+                        padding: "4px 8px",
+                        marginTop: 2,
+                      }}
                       placeholder="0.0000"
                       value={spots[p] ?? ""}
-                      onChange={(e) => setSpots((s) => ({ ...s, [p]: e.target.value }))}
+                      onChange={(e) =>
+                        setSpots((s) => ({ ...s, [p]: e.target.value }))
+                      }
                     />
                   </div>
                   <div>
                     <div style={{ fontSize: 10, color: C.dim }}>UNREALIZED</div>
-                    <div style={{ color: pnlColor(r.unrealUSD ?? r.unrealQuote) }}>
+                    <div
+                      style={{ color: pnlColor(r.unrealUSD ?? r.unrealQuote) }}
+                    >
                       {open
                         ? r.unrealUSD !== null && !isNaN(r.unrealUSD)
                           ? `${fmtSigned(r.unrealUSD, 0)} USD`
                           : r.unrealQuote !== null
-                          ? `${fmtSigned(r.unrealQuote, 0)} ${qc}`
-                          : "—"
+                            ? `${fmtSigned(r.unrealQuote, 0)} ${qc}`
+                            : "—"
                         : "—"}
                     </div>
                   </div>
                 </div>
 
-                <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 14, paddingTop: 10, display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                <div
+                  style={{
+                    borderTop: `1px solid ${C.border}`,
+                    marginTop: 14,
+                    paddingTop: 10,
+                    display: "flex",
+                    justifyContent: "space-between",
+                    fontSize: 12,
+                  }}
+                >
                   <span style={{ color: C.dim }}>Realized · net</span>
                   <span style={{ color: pnlColor(r.realizedUSDNet) }}>
-                    {r.realized.length ? `${fmtSigned(r.realizedUSDNet, 0)} USD` : "—"}
+                    {r.realized.length
+                      ? `${fmtSigned(r.realizedUSDNet, 0)} USD`
+                      : "—"}
                   </span>
                 </div>
                 {r.realized.length > 0 && (
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.faint, marginTop: 4 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: 11,
+                      color: C.faint,
+                      marginTop: 4,
+                    }}
+                  >
                     <span>gross {fmtSigned(r.realizedUSD, 0)}</span>
                     <span>comm −{fmt(r.closedComm, 0)} USD</span>
                   </div>
@@ -494,53 +733,150 @@ export default function FXPositionTracker() {
         </div>
 
         {/* add trade */}
-        <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 6, padding: "14px 18px", marginTop: 24 }}>
-          <div style={{ fontSize: 10, color: C.dim, letterSpacing: "0.1em", marginBottom: 10 }}>ADD TRADE</div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <input type="date" style={{ ...inputStyle, width: 150 }} value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
-            <input style={{ ...inputStyle, width: 110 }} placeholder="USD.SEK" value={form.pair} onChange={(e) => setForm((f) => ({ ...f, pair: e.target.value }))} />
-            <select style={{ ...inputStyle, width: 90 }} value={form.side} onChange={(e) => setForm((f) => ({ ...f, side: e.target.value }))}>
+        <div
+          style={{
+            background: C.panel,
+            border: `1px solid ${C.border}`,
+            borderRadius: 6,
+            padding: "14px 18px",
+            marginTop: 24,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 10,
+              color: C.dim,
+              letterSpacing: "0.1em",
+              marginBottom: 10,
+            }}
+          >
+            ADD TRADE
+          </div>
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <input
+              type="date"
+              style={{ ...inputStyle, width: 150 }}
+              value={form.date}
+              onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+            />
+            <input
+              style={{ ...inputStyle, width: 110 }}
+              placeholder="USD.SEK"
+              value={form.pair}
+              onChange={(e) => setForm((f) => ({ ...f, pair: e.target.value }))}
+            />
+            <select
+              style={{ ...inputStyle, width: 90 }}
+              value={form.side}
+              onChange={(e) => setForm((f) => ({ ...f, side: e.target.value }))}
+            >
               <option>BUY</option>
               <option>SELL</option>
             </select>
-            <input style={{ ...inputStyle, width: 130 }} placeholder="qty (base)" value={form.qty} onChange={(e) => setForm((f) => ({ ...f, qty: e.target.value }))} />
-            <input style={{ ...inputStyle, width: 110 }} placeholder="rate" value={form.rate} onChange={(e) => setForm((f) => ({ ...f, rate: e.target.value }))} />
+            <input
+              style={{ ...inputStyle, width: 130 }}
+              placeholder="qty (base)"
+              value={form.qty}
+              onChange={(e) => setForm((f) => ({ ...f, qty: e.target.value }))}
+            />
+            <input
+              style={{ ...inputStyle, width: 110 }}
+              placeholder="rate"
+              value={form.rate}
+              onChange={(e) => setForm((f) => ({ ...f, rate: e.target.value }))}
+            />
             <input
               style={{ ...inputStyle, width: 140 }}
-              placeholder={commHint !== null ? `comm $ (≈${commHint.toFixed(2)})` : "comm $ (opt)"}
+              placeholder={
+                commHint !== null
+                  ? `comm $ (≈${commHint.toFixed(2)})`
+                  : "comm $ (opt)"
+              }
               value={form.comm}
               onChange={(e) => setForm((f) => ({ ...f, comm: e.target.value }))}
             />
             <button
               onClick={addTrade}
-              style={{ ...inputStyle, background: C.amber, color: "#14110A", border: "none", fontWeight: 700, padding: "8px 18px" }}
+              style={{
+                ...inputStyle,
+                background: C.amber,
+                color: "#14110A",
+                border: "none",
+                fontWeight: 700,
+                padding: "8px 18px",
+              }}
             >
               Add
             </button>
             <button
-              onClick={() => { setShowImport((s) => !s); setImportMsg(""); }}
-              style={{ ...inputStyle, background: "transparent", color: C.dim, padding: "8px 14px" }}
+              onClick={() => {
+                setShowImport((s) => !s);
+                setImportMsg("");
+              }}
+              style={{
+                ...inputStyle,
+                background: "transparent",
+                color: C.dim,
+                padding: "8px 14px",
+              }}
             >
               {showImport ? "Close import" : "Import from journal"}
             </button>
           </div>
           <div style={{ fontSize: 10, color: C.faint, marginTop: 8 }}>
-            Commission is in USD, from the IBKR fill. Leave blank to auto-estimate at Tier I (0.20 bps, $2.00 min) — estimated rows are marked&nbsp;~.
+            Commission is in USD, from the IBKR fill. Leave blank to
+            auto-estimate at Tier I (0.20 bps, $2.00 min) — estimated rows are
+            marked&nbsp;~.
           </div>
 
           {showImport && (
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 11, color: C.dim, marginBottom: 6 }}>
-                One trade per line: <span style={{ color: C.text }}>YYYY-MM-DD, PAIR, BUY|SELL, qty, rate[, comm]</span> — e.g.{" "}
-                <span style={{ color: C.text }}>2026-05-12, USD.SEK, BUY, 50000, 9.4210, 2.00</span> (comm optional)
+                One trade per line:{" "}
+                <span style={{ color: C.text }}>
+                  YYYY-MM-DD, PAIR, BUY|SELL, qty, rate[, comm]
+                </span>{" "}
+                — e.g.{" "}
+                <span style={{ color: C.text }}>
+                  2026-05-12, USD.SEK, BUY, 50000, 9.4210, 2.00
+                </span>{" "}
+                (comm optional)
               </div>
               <textarea
-                style={{ ...inputStyle, width: "100%", minHeight: 110, resize: "vertical", boxSizing: "border-box" }}
+                style={{
+                  ...inputStyle,
+                  width: "100%",
+                  minHeight: 110,
+                  resize: "vertical",
+                  boxSizing: "border-box",
+                }}
                 value={importText}
                 onChange={(e) => setImportText(e.target.value)}
               />
-              <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 8 }}>
-                <button onClick={runImport} style={{ ...inputStyle, background: C.panelUp, color: C.text, padding: "7px 16px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 12,
+                  alignItems: "center",
+                  marginTop: 8,
+                }}
+              >
+                <button
+                  onClick={runImport}
+                  style={{
+                    ...inputStyle,
+                    background: C.panelUp,
+                    color: C.text,
+                    padding: "7px 16px",
+                  }}
+                >
                   Parse & add
                 </button>
                 <span style={{ fontSize: 12, color: C.dim }}>{importMsg}</span>
@@ -550,25 +886,103 @@ export default function FXPositionTracker() {
         </div>
 
         {/* ledger */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 32, marginBottom: 10 }}>
-          <h2 style={{ fontFamily: "'Instrument Serif', serif", fontStyle: "italic", fontWeight: 400, fontSize: 22, margin: 0, color: "#E8EDF2" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            marginTop: 32,
+            marginBottom: 10,
+          }}
+        >
+          <h2
+            style={{
+              fontFamily: "'Instrument Serif', serif",
+              fontStyle: "italic",
+              fontWeight: 400,
+              fontSize: 22,
+              margin: 0,
+              color: "#E8EDF2",
+            }}
+          >
             Trade ledger
           </h2>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <button onClick={exportJournal} disabled={!trades.length} style={{ ...inputStyle, background: "transparent", color: trades.length ? C.amber : C.faint, padding: "6px 14px" }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+              justifyContent: "flex-end",
+            }}
+          >
+            <button
+              onClick={exportJournal}
+              disabled={!trades.length}
+              style={{
+                ...inputStyle,
+                background: "transparent",
+                color: trades.length ? C.amber : C.faint,
+                padding: "6px 14px",
+              }}
+            >
               Export journal
             </button>
-            <button onClick={exportCSV} disabled={!allRealized.length} style={{ ...inputStyle, background: "transparent", color: allRealized.length ? C.amber : C.faint, padding: "6px 14px" }}>
+            <button
+              onClick={exportCSV}
+              disabled={!allRealized.length}
+              style={{
+                ...inputStyle,
+                background: "transparent",
+                color: allRealized.length ? C.amber : C.faint,
+                padding: "6px 14px",
+              }}
+            >
               Export realized lots (§988 CSV)
             </button>
           </div>
         </div>
-        <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 6, overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+        <div
+          style={{
+            background: C.panel,
+            border: `1px solid ${C.border}`,
+            borderRadius: 6,
+            overflowX: "auto",
+          }}
+        >
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: 12.5,
+            }}
+          >
             <thead>
-              <tr style={{ color: C.dim, fontSize: 10, letterSpacing: "0.1em", textAlign: "right" }}>
-                {["DATE", "PAIR", "SIDE", "QTY (BASE)", "RATE", "COMM (USD)", ""].map((h, i) => (
-                  <th key={h + i} style={{ padding: "10px 14px", textAlign: i < 3 ? "left" : "right", borderBottom: `1px solid ${C.border}`, fontWeight: 500 }}>
+              <tr
+                style={{
+                  color: C.dim,
+                  fontSize: 10,
+                  letterSpacing: "0.1em",
+                  textAlign: "right",
+                }}
+              >
+                {[
+                  "DATE",
+                  "PAIR",
+                  "SIDE",
+                  "QTY (BASE)",
+                  "RATE",
+                  "COMM (USD)",
+                  "",
+                ].map((h, i) => (
+                  <th
+                    key={h + i}
+                    style={{
+                      padding: "10px 14px",
+                      textAlign: i < 3 ? "left" : "right",
+                      borderBottom: `1px solid ${C.border}`,
+                      fontWeight: 500,
+                    }}
+                  >
                     {h}
                   </th>
                 ))}
@@ -576,20 +990,55 @@ export default function FXPositionTracker() {
             </thead>
             <tbody>
               {sortedTrades.length === 0 && (
-                <tr><td colSpan={7} style={{ padding: 18, color: C.dim }}>Empty.</td></tr>
+                <tr>
+                  <td colSpan={7} style={{ padding: 18, color: C.dim }}>
+                    Empty.
+                  </td>
+                </tr>
               )}
               {sortedTrades.map((t) => (
-                <tr key={t.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                <tr
+                  key={t.id}
+                  style={{ borderBottom: `1px solid ${C.border}` }}
+                >
                   <td style={{ padding: "8px 14px" }}>{t.date}</td>
                   <td style={{ padding: "8px 14px" }}>{t.pair}</td>
-                  <td style={{ padding: "8px 14px", color: t.side === "BUY" ? C.green : C.red }}>{t.side}</td>
-                  <td style={{ padding: "8px 14px", textAlign: "right" }}>{fmt(t.qty, 0)}</td>
-                  <td style={{ padding: "8px 14px", textAlign: "right" }}>{fmt(t.rate, 4)}</td>
-                  <td style={{ padding: "8px 14px", textAlign: "right", color: t.commEst ? C.dim : C.text }} title={t.commEst ? "estimated (Tier I)" : "from fill"}>
-                    {t.commEst ? "~" : ""}{fmt(Number.isFinite(t.comm) ? t.comm : 0, 2)}
+                  <td
+                    style={{
+                      padding: "8px 14px",
+                      color: t.side === "BUY" ? C.green : C.red,
+                    }}
+                  >
+                    {t.side}
                   </td>
                   <td style={{ padding: "8px 14px", textAlign: "right" }}>
-                    <button onClick={() => deleteTrade(t.id)} style={{ background: "none", border: "none", color: C.faint, fontSize: 12 }} title="Delete">
+                    {fmt(t.qty, 0)}
+                  </td>
+                  <td style={{ padding: "8px 14px", textAlign: "right" }}>
+                    {fmt(t.rate, 4)}
+                  </td>
+                  <td
+                    style={{
+                      padding: "8px 14px",
+                      textAlign: "right",
+                      color: t.commEst ? C.dim : C.text,
+                    }}
+                    title={t.commEst ? "estimated (Tier I)" : "from fill"}
+                  >
+                    {t.commEst ? "~" : ""}
+                    {fmt(Number.isFinite(t.comm) ? t.comm : 0, 2)}
+                  </td>
+                  <td style={{ padding: "8px 14px", textAlign: "right" }}>
+                    <button
+                      onClick={() => deleteTrade(t.id)}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: C.faint,
+                        fontSize: 12,
+                      }}
+                      title="Delete"
+                    >
                       ✕
                     </button>
                   </td>
@@ -602,15 +1051,72 @@ export default function FXPositionTracker() {
         {/* realized detail */}
         {allRealized.length > 0 && (
           <>
-            <h2 style={{ fontFamily: "'Instrument Serif', serif", fontStyle: "italic", fontWeight: 400, fontSize: 22, margin: "32px 0 10px", color: "#E8EDF2" }}>
-              Realized lots <span style={{ fontSize: 13, color: C.dim, fontStyle: "normal", fontFamily: "'JetBrains Mono', monospace" }}>(FIFO)</span>
+            <h2
+              style={{
+                fontFamily: "'Instrument Serif', serif",
+                fontStyle: "italic",
+                fontWeight: 400,
+                fontSize: 22,
+                margin: "32px 0 10px",
+                color: "#E8EDF2",
+              }}
+            >
+              Realized lots{" "}
+              <span
+                style={{
+                  fontSize: 13,
+                  color: C.dim,
+                  fontStyle: "normal",
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
+              >
+                (FIFO)
+              </span>
             </h2>
-            <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 6, overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <div
+              style={{
+                background: C.panel,
+                border: `1px solid ${C.border}`,
+                borderRadius: 6,
+                overflowX: "auto",
+              }}
+            >
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontSize: 12.5,
+                }}
+              >
                 <thead>
-                  <tr style={{ color: C.dim, fontSize: 10, letterSpacing: "0.1em" }}>
-                    {["PAIR", "OPENED", "CLOSED", "QTY", "OPEN RATE", "CLOSE RATE", "P&L (QUOTE)", "P&L GROSS (USD)", "COMM (USD)", "P&L NET (USD)"].map((h, i) => (
-                      <th key={h} style={{ padding: "10px 14px", textAlign: i < 3 ? "left" : "right", borderBottom: `1px solid ${C.border}`, fontWeight: 500 }}>
+                  <tr
+                    style={{
+                      color: C.dim,
+                      fontSize: 10,
+                      letterSpacing: "0.1em",
+                    }}
+                  >
+                    {[
+                      "PAIR",
+                      "OPENED",
+                      "CLOSED",
+                      "QTY",
+                      "OPEN RATE",
+                      "CLOSE RATE",
+                      "P&L (QUOTE)",
+                      "P&L GROSS (USD)",
+                      "COMM (USD)",
+                      "P&L NET (USD)",
+                    ].map((h, i) => (
+                      <th
+                        key={h}
+                        style={{
+                          padding: "10px 14px",
+                          textAlign: i < 3 ? "left" : "right",
+                          borderBottom: `1px solid ${C.border}`,
+                          fontWeight: 500,
+                        }}
+                      >
                         {h}
                       </th>
                     ))}
@@ -618,19 +1124,56 @@ export default function FXPositionTracker() {
                 </thead>
                 <tbody>
                   {allRealized.map((r, i) => (
-                    <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <tr
+                      key={i}
+                      style={{ borderBottom: `1px solid ${C.border}` }}
+                    >
                       <td style={{ padding: "8px 14px" }}>{r.pair}</td>
                       <td style={{ padding: "8px 14px" }}>{r.openDate}</td>
                       <td style={{ padding: "8px 14px" }}>{r.closeDate}</td>
-                      <td style={{ padding: "8px 14px", textAlign: "right" }}>{fmt(r.qty, 0)}</td>
-                      <td style={{ padding: "8px 14px", textAlign: "right" }}>{fmt(r.openRate, 4)}</td>
-                      <td style={{ padding: "8px 14px", textAlign: "right" }}>{fmt(r.closeRate, 4)}</td>
-                      <td style={{ padding: "8px 14px", textAlign: "right", color: pnlColor(r.pnlQuote) }}>{fmtSigned(r.pnlQuote, 0)}</td>
-                      <td style={{ padding: "8px 14px", textAlign: "right", color: pnlColor(r.pnlUSD) }}>
+                      <td style={{ padding: "8px 14px", textAlign: "right" }}>
+                        {fmt(r.qty, 0)}
+                      </td>
+                      <td style={{ padding: "8px 14px", textAlign: "right" }}>
+                        {fmt(r.openRate, 4)}
+                      </td>
+                      <td style={{ padding: "8px 14px", textAlign: "right" }}>
+                        {fmt(r.closeRate, 4)}
+                      </td>
+                      <td
+                        style={{
+                          padding: "8px 14px",
+                          textAlign: "right",
+                          color: pnlColor(r.pnlQuote),
+                        }}
+                      >
+                        {fmtSigned(r.pnlQuote, 0)}
+                      </td>
+                      <td
+                        style={{
+                          padding: "8px 14px",
+                          textAlign: "right",
+                          color: pnlColor(r.pnlUSD),
+                        }}
+                      >
                         {r.pnlUSD === null ? "—" : fmtSigned(r.pnlUSD, 0)}
                       </td>
-                      <td style={{ padding: "8px 14px", textAlign: "right", color: C.amber }}>−{fmt(r.commUSD, 2)}</td>
-                      <td style={{ padding: "8px 14px", textAlign: "right", color: pnlColor(r.pnlUSDNet) }}>
+                      <td
+                        style={{
+                          padding: "8px 14px",
+                          textAlign: "right",
+                          color: C.amber,
+                        }}
+                      >
+                        −{fmt(r.commUSD, 2)}
+                      </td>
+                      <td
+                        style={{
+                          padding: "8px 14px",
+                          textAlign: "right",
+                          color: pnlColor(r.pnlUSDNet),
+                        }}
+                      >
                         {r.pnlUSDNet === null ? "—" : fmtSigned(r.pnlUSDNet, 0)}
                       </td>
                     </tr>
@@ -641,14 +1184,26 @@ export default function FXPositionTracker() {
           </>
         )}
 
-        <div style={{ marginTop: 26, fontSize: 11, color: C.faint, lineHeight: 1.7 }}>
-          Quantities are base-currency notional (e.g. USD for USD.SEK). BUY = long base / short quote. Realized P&L is computed
-          per FIFO lot in the quote currency and converted to USD at the closing rate. IBKR commission is charged in the account
-          base currency (USD) — 0.20 bps of trade value, $2.00 per-order minimum at Tier I — and applied as a per-lot basis/proceeds
-          adjustment: net P&L = gross rate P&L − allocated entry comm − allocated exit comm. AVG COST stays a pure execution rate;
-          commission is carried separately so the displayed rate is not distorted. Estimated commissions are marked ~; enter the
-          actual fill commission to reconcile exactly to IBKR. Interest/financing accruals are not positions and remain excluded —
-          track those from the IBKR statement of funds.
+        <div
+          style={{
+            marginTop: 26,
+            fontSize: 11,
+            color: C.faint,
+            lineHeight: 1.7,
+          }}
+        >
+          Quantities are base-currency notional (e.g. USD for USD.SEK). BUY =
+          long base / short quote. Realized P&L is computed per FIFO lot in the
+          quote currency and converted to USD at the closing rate. IBKR
+          commission is charged in the account base currency (USD) — 0.20 bps of
+          trade value, $2.00 per-order minimum at Tier I — and applied as a
+          per-lot basis/proceeds adjustment: net P&L = gross rate P&L −
+          allocated entry comm − allocated exit comm. AVG COST stays a pure
+          execution rate; commission is carried separately so the displayed rate
+          is not distorted. Estimated commissions are marked ~; enter the actual
+          fill commission to reconcile exactly to IBKR. Interest/financing
+          accruals are not positions and remain excluded — track those from the
+          IBKR statement of funds.
         </div>
       </div>
     </div>
