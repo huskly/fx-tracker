@@ -1,21 +1,28 @@
 import { useState, useEffect, useMemo } from "react";
 
 // ---------- FIFO engine ----------
-// Trade: { id, date, pair, side: 'BUY'|'SELL', qty (base ccy units), rate }
+// Trade: { id, date, pair, side: 'BUY'|'SELL', qty (base ccy units), rate, comm (USD), commEst }
 // BUY = long base (buy USD, sell quote). Signed qty: BUY +, SELL -.
 // Realized P&L computed in quote ccy, converted to USD at the closing rate
 // (valid for USD-base pairs like USD.SEK; for X.USD pairs quote IS USD).
+//
+// comm is the IBKR commission in the account base currency (USD), charged
+// separately from the quote leg. It is allocated per FIFO lot as a basis/
+// proceeds adjustment: net P&L = gross rate P&L − (entry comm + exit comm),
+// pro-rated by the quantity each trade closes. avgCost stays a pure rate.
 
 function computePair(trades, pair, spot) {
   const sorted = [...trades]
     .filter((t) => t.pair === pair)
     .sort((a, b) => (a.date === b.date ? a.seq - b.seq : a.date < b.date ? -1 : 1));
 
-  const lots = []; // open lots: { qty signed, rate, date }
+  const lots = []; // open lots: { qty signed, rate, date, commPerUnit (USD/base unit) }
   const realized = []; // closed lots
 
   for (const t of sorted) {
     let q = t.side === "BUY" ? t.qty : -t.qty;
+    const tComm = Number.isFinite(t.comm) ? t.comm : 0;
+    const tCommPerUnit = t.qty > 0 ? tComm / t.qty : 0; // USD per base unit for this trade
     // close against opposite-sign lots, FIFO
     while (Math.abs(q) > 1e-9 && lots.length && Math.sign(lots[0].qty) !== Math.sign(q)) {
       const lot = lots[0];
@@ -23,6 +30,10 @@ function computePair(trades, pair, spot) {
       const dir = Math.sign(lot.qty); // +1 closing a long, -1 closing a short
       const pnlQuote = closeQty * (t.rate - lot.rate) * dir;
       const pnlUSD = quoteToUSD(pnlQuote, pair, t.rate);
+      const entryComm = (lot.commPerUnit || 0) * closeQty; // allocated entry commission (USD)
+      const exitComm = tCommPerUnit * closeQty; // allocated exit commission (USD)
+      const commUSD = entryComm + exitComm;
+      const pnlUSDNet = pnlUSD === null ? null : pnlUSD - commUSD;
       realized.push({
         pair,
         openDate: lot.date,
@@ -32,12 +43,16 @@ function computePair(trades, pair, spot) {
         closeRate: t.rate,
         pnlQuote,
         pnlUSD,
+        entryComm,
+        exitComm,
+        commUSD,
+        pnlUSDNet,
       });
       lot.qty -= closeQty * dir;
       q += closeQty * dir;
       if (Math.abs(lot.qty) < 1e-9) lots.shift();
     }
-    if (Math.abs(q) > 1e-9) lots.push({ qty: q, rate: t.rate, date: t.date });
+    if (Math.abs(q) > 1e-9) lots.push({ qty: q, rate: t.rate, date: t.date, commPerUnit: tCommPerUnit });
   }
 
   const netQty = lots.reduce((s, l) => s + l.qty, 0);
@@ -54,15 +69,35 @@ function computePair(trades, pair, spot) {
   }
 
   const realizedQuote = realized.reduce((s, r) => s + r.pnlQuote, 0);
-  const realizedUSD = realized.reduce((s, r) => s + (r.pnlUSD ?? 0), 0);
+  const realizedUSD = realized.reduce((s, r) => s + (r.pnlUSD ?? 0), 0); // gross of commission
+  const closedComm = realized.reduce((s, r) => s + (r.commUSD ?? 0), 0); // comm on closed lots
+  const realizedUSDNet = realized.reduce((s, r) => s + (r.pnlUSDNet ?? r.pnlUSD ?? 0), 0);
+  // entry commission still attached to open lots — sunk, but not yet realized
+  const openComm = lots.reduce((s, l) => s + (l.commPerUnit || 0) * Math.abs(l.qty), 0);
+  const totalComm = sorted.reduce((s, t) => s + (Number.isFinite(t.comm) ? t.comm : 0), 0);
 
   // Net cash in the quote currency: the other leg of the position, signed.
   // BUY base pays quote (−), SELL base receives quote (+). This is the actual
   // broker balance for the quote ccy (realized quote P&L stays parked here,
   // offsetting the short), unlike the open lots which carry at original cost.
+  // Commission is charged in USD, not the quote ccy, so it does NOT touch this.
   const netQuoteCash = sorted.reduce((s, t) => s + (t.side === "SELL" ? 1 : -1) * t.qty * t.rate, 0);
 
-  return { netQty, avgCost, unrealQuote, unrealUSD, realizedQuote, realizedUSD, netQuoteCash, realized, tradeCount: sorted.length };
+  return {
+    netQty,
+    avgCost,
+    unrealQuote,
+    unrealUSD,
+    realizedQuote,
+    realizedUSD,
+    realizedUSDNet,
+    closedComm,
+    openComm,
+    totalComm,
+    netQuoteCash,
+    realized,
+    tradeCount: sorted.length,
+  };
 }
 
 function quoteCcy(pair) {
@@ -76,6 +111,23 @@ function quoteToUSD(amtQuote, pair, rate) {
   if (quoteCcy(pair) === "USD") return amtQuote;
   if (baseCcy(pair) === "USD" && rate > 0) return amtQuote / rate;
   return null; // cross pair, no USD leg — shown in quote ccy only
+}
+
+// ---------- IBKR FX commission (IDEALPRO, Tier I) ----------
+// 0.20 bps of trade value, USD 2.00 per-order minimum. Charged in account base
+// ccy (USD). Tier I covers monthly FX trade value under $1B (all retail size).
+const FX_COMM_BPS = 0.2;
+const FX_COMM_MIN_USD = 2.0;
+
+function tradeValueUSD(pair, qty, rate) {
+  if (baseCcy(pair) === "USD") return qty; // qty is USD notional
+  if (quoteCcy(pair) === "USD") return qty * rate; // base * rate = USD notional
+  return null; // cross pair with no USD leg — can't size in USD
+}
+function estimateComm(pair, qty, rate) {
+  const tv = tradeValueUSD(pair, qty, rate);
+  if (tv === null || !(tv > 0)) return null;
+  return Math.max(FX_COMM_MIN_USD, tv * (FX_COMM_BPS / 10000));
 }
 
 // ---------- formatting ----------
@@ -115,6 +167,7 @@ export default function FXPositionTracker() {
     side: "BUY",
     qty: "",
     rate: "",
+    comm: "",
   });
 
   // load
@@ -124,7 +177,13 @@ export default function FXPositionTracker() {
         const res = await window.storage.get("fx-tracker-v1");
         if (res && res.value) {
           const data = JSON.parse(res.value);
-          setTrades(data.trades || []);
+          // migrate pre-commission trades: backfill an estimated commission
+          const migrated = (data.trades || []).map((t) =>
+            "comm" in t
+              ? t
+              : { ...t, comm: estimateComm(t.pair, t.qty, t.rate) ?? 0, commEst: true }
+          );
+          setTrades(migrated);
           setSpots(data.spots || {});
         }
       } catch (e) {
@@ -159,15 +218,19 @@ export default function FXPositionTracker() {
   }, [trades, pairs, spots]);
 
   const totals = useMemo(() => {
-    let realized = 0, unreal = 0, unrealKnown = true;
+    let gross = 0, net = 0, comm = 0, paid = 0, unreal = 0, unrealKnown = true;
     for (const p of pairs) {
-      realized += results[p].realizedUSD ?? 0;
-      if (results[p].avgCost !== null) {
-        if (results[p].unrealUSD === null || isNaN(results[p].unrealUSD)) unrealKnown = false;
-        else unreal += results[p].unrealUSD;
+      const r = results[p];
+      gross += r.realizedUSD ?? 0;
+      net += r.realizedUSDNet ?? 0;
+      comm += r.closedComm ?? 0;
+      paid += r.totalComm ?? 0;
+      if (r.avgCost !== null) {
+        if (r.unrealUSD === null || isNaN(r.unrealUSD)) unrealKnown = false;
+        else unreal += r.unrealUSD;
       }
     }
-    return { realized, unreal, unrealKnown };
+    return { gross, net, comm, paid, unreal, unrealKnown };
   }, [results, pairs]);
 
   const allRealized = useMemo(
@@ -175,16 +238,35 @@ export default function FXPositionTracker() {
     [results, pairs]
   );
 
+  // live commission hint for the add-trade form
+  const commHint = useMemo(() => {
+    const qty = parseFloat(String(form.qty).replace(/,/g, ""));
+    const rate = parseFloat(form.rate);
+    if (!qty || !rate) return null;
+    return estimateComm(form.pair.toUpperCase().trim(), qty, rate);
+  }, [form.pair, form.qty, form.rate]);
+
   // ---------- actions ----------
   const addTrade = () => {
     const qty = parseFloat(String(form.qty).replace(/,/g, ""));
     const rate = parseFloat(form.rate);
     if (!form.date || !form.pair || !qty || qty <= 0 || !rate || rate <= 0) return;
+    const pair = form.pair.toUpperCase().trim();
+    const commRaw = String(form.comm ?? "").replace(/,/g, "").trim();
+    let comm, commEst;
+    if (commRaw === "") {
+      comm = estimateComm(pair, qty, rate) ?? 0;
+      commEst = true;
+    } else {
+      comm = parseFloat(commRaw);
+      if (!Number.isFinite(comm) || comm < 0) return;
+      commEst = false;
+    }
     setTrades((ts) => [
       ...ts,
-      { id: Date.now() + Math.random(), seq: ts.length, date: form.date, pair: form.pair.toUpperCase().trim(), side: form.side, qty, rate },
+      { id: Date.now() + Math.random(), seq: ts.length, date: form.date, pair, side: form.side, qty, rate, comm, commEst },
     ]);
-    setForm((f) => ({ ...f, qty: "", rate: "" }));
+    setForm((f) => ({ ...f, qty: "", rate: "", comm: "" }));
   };
 
   const deleteTrade = (id) => setTrades((ts) => ts.filter((t) => t.id !== id));
@@ -196,14 +278,29 @@ export default function FXPositionTracker() {
     lines.forEach((line, i) => {
       const parts = line.split(/[,\t]+|\s{1,}/).map((s) => s.trim()).filter(Boolean);
       if (parts.length < 5) return errors.push(i + 1);
-      const [date, pair, side, qtyS, rateS] = parts;
+      const [date, pairRaw, side, qtyS, rateS, commS] = parts;
+      const pair = pairRaw.toUpperCase();
       const qty = parseFloat(qtyS.replace(/,/g, ""));
       const rate = parseFloat(rateS);
       const sideN = side.toUpperCase();
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !pair.includes(".") || !["BUY", "SELL"].includes(sideN) || !qty || !rate) {
         return errors.push(i + 1);
       }
-      parsed.push({ date, pair: pair.toUpperCase(), side: sideN, qty, rate });
+      let comm, commEst;
+      if (commS === undefined || commS === "") {
+        comm = estimateComm(pair, qty, rate) ?? 0;
+        commEst = true;
+      } else {
+        const c = parseFloat(commS.replace(/,/g, ""));
+        if (!Number.isFinite(c) || c < 0) {
+          comm = estimateComm(pair, qty, rate) ?? 0;
+          commEst = true;
+        } else {
+          comm = c;
+          commEst = false;
+        }
+      }
+      parsed.push({ date, pair, side: sideN, qty, rate, comm, commEst });
     });
     if (parsed.length) {
       setTrades((ts) => [
@@ -219,9 +316,23 @@ export default function FXPositionTracker() {
   };
 
   const exportCSV = () => {
-    const header = "pair,open_date,close_date,qty_base,open_rate,close_rate,pnl_quote_ccy,pnl_usd";
+    const header =
+      "pair,open_date,close_date,qty_base,open_rate,close_rate,pnl_quote_ccy,pnl_usd_gross,entry_comm_usd,exit_comm_usd,commission_usd,pnl_usd_net";
     const rows = allRealized.map((r) =>
-      [r.pair, r.openDate, r.closeDate, r.qty, r.openRate, r.closeRate, r.pnlQuote.toFixed(2), r.pnlUSD === null ? "" : r.pnlUSD.toFixed(2)].join(",")
+      [
+        r.pair,
+        r.openDate,
+        r.closeDate,
+        r.qty,
+        r.openRate,
+        r.closeRate,
+        r.pnlQuote.toFixed(2),
+        r.pnlUSD === null ? "" : r.pnlUSD.toFixed(2),
+        (r.entryComm ?? 0).toFixed(2),
+        (r.exitComm ?? 0).toFixed(2),
+        (r.commUSD ?? 0).toFixed(2),
+        r.pnlUSDNet === null ? "" : r.pnlUSDNet.toFixed(2),
+      ].join(",")
     );
     const blob = new Blob([header + "\n" + rows.join("\n")], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -235,7 +346,7 @@ export default function FXPositionTracker() {
   const exportJournal = () => {
     const rows = [...trades]
       .sort((a, b) => (a.date === b.date ? a.seq - b.seq : a.date < b.date ? -1 : 1))
-      .map((t) => [t.date, t.pair, t.side, t.qty, t.rate].join(", "));
+      .map((t) => [t.date, t.pair, t.side, t.qty, t.rate, Number.isFinite(t.comm) ? t.comm : 0].join(", "));
     const blob = new Blob([rows.join("\n") + (rows.length ? "\n" : "")], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -272,25 +383,32 @@ export default function FXPositionTracker() {
 
       <div style={{ maxWidth: 1060, margin: "0 auto", padding: "32px 24px 64px" }}>
         {/* header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", borderBottom: `1px solid ${C.border}`, paddingBottom: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", borderBottom: `1px solid ${C.border}`, paddingBottom: 18, flexWrap: "wrap", gap: 16 }}>
           <div>
             <h1 style={{ fontFamily: "'Instrument Serif', serif", fontStyle: "italic", fontWeight: 400, fontSize: 34, margin: 0, color: "#E8EDF2" }}>
               FX Positions
             </h1>
             <div style={{ fontSize: 11, color: C.dim, marginTop: 4, letterSpacing: "0.08em" }}>
-              FIFO LOTS · §988 LEDGER · {trades.length} TRADE{trades.length === 1 ? "" : "S"}
+              FIFO LOTS · §988 LEDGER · NET OF IBKR COMM · {trades.length} TRADE{trades.length === 1 ? "" : "S"}
             </div>
           </div>
-          <div style={{ display: "flex", gap: 36, textAlign: "right" }}>
+          <div style={{ display: "flex", gap: 28, textAlign: "right" }}>
             <div>
-              <div style={{ fontSize: 10, color: C.dim, letterSpacing: "0.1em" }}>REALIZED (USD)</div>
-              <div style={{ fontSize: 20, color: pnlColor(totals.realized) }}>{fmtSigned(totals.realized, 0)}</div>
+              <div style={{ fontSize: 10, color: C.dim, letterSpacing: "0.1em" }}>REALIZED · NET (USD)</div>
+              <div style={{ fontSize: 20, color: pnlColor(totals.net) }}>{fmtSigned(totals.net, 0)}</div>
+              <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>gross {fmtSigned(totals.gross, 0)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: C.dim, letterSpacing: "0.1em" }}>COMMISSIONS (USD)</div>
+              <div style={{ fontSize: 20, color: C.amber }}>{totals.comm ? `−${fmt(totals.comm, 0)}` : "—"}</div>
+              <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>paid {fmt(totals.paid, 0)}</div>
             </div>
             <div>
               <div style={{ fontSize: 10, color: C.dim, letterSpacing: "0.1em" }}>UNREALIZED (USD)</div>
               <div style={{ fontSize: 20, color: pnlColor(totals.unreal) }}>
                 {totals.unrealKnown ? fmtSigned(totals.unreal, 0) : "set spots"}
               </div>
+              <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>excl. exit comm</div>
             </div>
           </div>
         </div>
@@ -359,11 +477,17 @@ export default function FXPositionTracker() {
                 </div>
 
                 <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 14, paddingTop: 10, display: "flex", justifyContent: "space-between", fontSize: 12 }}>
-                  <span style={{ color: C.dim }}>Realized</span>
-                  <span style={{ color: pnlColor(r.realizedUSD) }}>
-                    {r.realized.length ? `${fmtSigned(r.realizedUSD, 0)} USD` : "—"}
+                  <span style={{ color: C.dim }}>Realized · net</span>
+                  <span style={{ color: pnlColor(r.realizedUSDNet) }}>
+                    {r.realized.length ? `${fmtSigned(r.realizedUSDNet, 0)} USD` : "—"}
                   </span>
                 </div>
+                {r.realized.length > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.faint, marginTop: 4 }}>
+                    <span>gross {fmtSigned(r.realizedUSD, 0)}</span>
+                    <span>comm −{fmt(r.closedComm, 0)} USD</span>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -381,6 +505,12 @@ export default function FXPositionTracker() {
             </select>
             <input style={{ ...inputStyle, width: 130 }} placeholder="qty (base)" value={form.qty} onChange={(e) => setForm((f) => ({ ...f, qty: e.target.value }))} />
             <input style={{ ...inputStyle, width: 110 }} placeholder="rate" value={form.rate} onChange={(e) => setForm((f) => ({ ...f, rate: e.target.value }))} />
+            <input
+              style={{ ...inputStyle, width: 140 }}
+              placeholder={commHint !== null ? `comm $ (≈${commHint.toFixed(2)})` : "comm $ (opt)"}
+              value={form.comm}
+              onChange={(e) => setForm((f) => ({ ...f, comm: e.target.value }))}
+            />
             <button
               onClick={addTrade}
               style={{ ...inputStyle, background: C.amber, color: "#14110A", border: "none", fontWeight: 700, padding: "8px 18px" }}
@@ -394,12 +524,15 @@ export default function FXPositionTracker() {
               {showImport ? "Close import" : "Import from journal"}
             </button>
           </div>
+          <div style={{ fontSize: 10, color: C.faint, marginTop: 8 }}>
+            Commission is in USD, from the IBKR fill. Leave blank to auto-estimate at Tier I (0.20 bps, $2.00 min) — estimated rows are marked&nbsp;~.
+          </div>
 
           {showImport && (
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 11, color: C.dim, marginBottom: 6 }}>
-                One trade per line: <span style={{ color: C.text }}>YYYY-MM-DD, PAIR, BUY|SELL, qty, rate</span> — e.g.{" "}
-                <span style={{ color: C.text }}>2026-05-12, USD.SEK, BUY, 50000, 9.4210</span>
+                One trade per line: <span style={{ color: C.text }}>YYYY-MM-DD, PAIR, BUY|SELL, qty, rate[, comm]</span> — e.g.{" "}
+                <span style={{ color: C.text }}>2026-05-12, USD.SEK, BUY, 50000, 9.4210, 2.00</span> (comm optional)
               </div>
               <textarea
                 style={{ ...inputStyle, width: "100%", minHeight: 110, resize: "vertical", boxSizing: "border-box" }}
@@ -434,7 +567,7 @@ export default function FXPositionTracker() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
             <thead>
               <tr style={{ color: C.dim, fontSize: 10, letterSpacing: "0.1em", textAlign: "right" }}>
-                {["DATE", "PAIR", "SIDE", "QTY (BASE)", "RATE", ""].map((h, i) => (
+                {["DATE", "PAIR", "SIDE", "QTY (BASE)", "RATE", "COMM (USD)", ""].map((h, i) => (
                   <th key={h + i} style={{ padding: "10px 14px", textAlign: i < 3 ? "left" : "right", borderBottom: `1px solid ${C.border}`, fontWeight: 500 }}>
                     {h}
                   </th>
@@ -443,7 +576,7 @@ export default function FXPositionTracker() {
             </thead>
             <tbody>
               {sortedTrades.length === 0 && (
-                <tr><td colSpan={6} style={{ padding: 18, color: C.dim }}>Empty.</td></tr>
+                <tr><td colSpan={7} style={{ padding: 18, color: C.dim }}>Empty.</td></tr>
               )}
               {sortedTrades.map((t) => (
                 <tr key={t.id} style={{ borderBottom: `1px solid ${C.border}` }}>
@@ -452,6 +585,9 @@ export default function FXPositionTracker() {
                   <td style={{ padding: "8px 14px", color: t.side === "BUY" ? C.green : C.red }}>{t.side}</td>
                   <td style={{ padding: "8px 14px", textAlign: "right" }}>{fmt(t.qty, 0)}</td>
                   <td style={{ padding: "8px 14px", textAlign: "right" }}>{fmt(t.rate, 4)}</td>
+                  <td style={{ padding: "8px 14px", textAlign: "right", color: t.commEst ? C.dim : C.text }} title={t.commEst ? "estimated (Tier I)" : "from fill"}>
+                    {t.commEst ? "~" : ""}{fmt(Number.isFinite(t.comm) ? t.comm : 0, 2)}
+                  </td>
                   <td style={{ padding: "8px 14px", textAlign: "right" }}>
                     <button onClick={() => deleteTrade(t.id)} style={{ background: "none", border: "none", color: C.faint, fontSize: 12 }} title="Delete">
                       ✕
@@ -473,7 +609,7 @@ export default function FXPositionTracker() {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                 <thead>
                   <tr style={{ color: C.dim, fontSize: 10, letterSpacing: "0.1em" }}>
-                    {["PAIR", "OPENED", "CLOSED", "QTY", "OPEN RATE", "CLOSE RATE", "P&L (QUOTE)", "P&L (USD)"].map((h, i) => (
+                    {["PAIR", "OPENED", "CLOSED", "QTY", "OPEN RATE", "CLOSE RATE", "P&L (QUOTE)", "P&L GROSS (USD)", "COMM (USD)", "P&L NET (USD)"].map((h, i) => (
                       <th key={h} style={{ padding: "10px 14px", textAlign: i < 3 ? "left" : "right", borderBottom: `1px solid ${C.border}`, fontWeight: 500 }}>
                         {h}
                       </th>
@@ -493,6 +629,10 @@ export default function FXPositionTracker() {
                       <td style={{ padding: "8px 14px", textAlign: "right", color: pnlColor(r.pnlUSD) }}>
                         {r.pnlUSD === null ? "—" : fmtSigned(r.pnlUSD, 0)}
                       </td>
+                      <td style={{ padding: "8px 14px", textAlign: "right", color: C.amber }}>−{fmt(r.commUSD, 2)}</td>
+                      <td style={{ padding: "8px 14px", textAlign: "right", color: pnlColor(r.pnlUSDNet) }}>
+                        {r.pnlUSDNet === null ? "—" : fmtSigned(r.pnlUSDNet, 0)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -503,8 +643,12 @@ export default function FXPositionTracker() {
 
         <div style={{ marginTop: 26, fontSize: 11, color: C.faint, lineHeight: 1.7 }}>
           Quantities are base-currency notional (e.g. USD for USD.SEK). BUY = long base / short quote. Realized P&L is computed
-          per FIFO lot in the quote currency and converted to USD at the closing rate. Interest accruals are not positions and
-          are intentionally excluded — track those from the IBKR statement of funds.
+          per FIFO lot in the quote currency and converted to USD at the closing rate. IBKR commission is charged in the account
+          base currency (USD) — 0.20 bps of trade value, $2.00 per-order minimum at Tier I — and applied as a per-lot basis/proceeds
+          adjustment: net P&L = gross rate P&L − allocated entry comm − allocated exit comm. AVG COST stays a pure execution rate;
+          commission is carried separately so the displayed rate is not distorted. Estimated commissions are marked ~; enter the
+          actual fill commission to reconcile exactly to IBKR. Interest/financing accruals are not positions and remain excluded —
+          track those from the IBKR statement of funds.
         </div>
       </div>
     </div>
