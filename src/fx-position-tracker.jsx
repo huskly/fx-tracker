@@ -56,7 +56,13 @@ function computePair(trades, pair, spot) {
   const realizedQuote = realized.reduce((s, r) => s + r.pnlQuote, 0);
   const realizedUSD = realized.reduce((s, r) => s + (r.pnlUSD ?? 0), 0);
 
-  return { netQty, avgCost, unrealQuote, unrealUSD, realizedQuote, realizedUSD, realized, tradeCount: sorted.length };
+  // Net cash in the quote currency: the other leg of the position, signed.
+  // BUY base pays quote (−), SELL base receives quote (+). This is the actual
+  // broker balance for the quote ccy (realized quote P&L stays parked here,
+  // offsetting the short), unlike the open lots which carry at original cost.
+  const netQuoteCash = sorted.reduce((s, t) => s + (t.side === "SELL" ? 1 : -1) * t.qty * t.rate, 0);
+
+  return { netQty, avgCost, unrealQuote, unrealUSD, realizedQuote, realizedUSD, netQuoteCash, realized, tradeCount: sorted.length };
 }
 
 function quoteCcy(pair) {
@@ -321,9 +327,14 @@ export default function FXPositionTracker() {
                     <div>{open ? fmt(r.netQty, 0) : "—"}</div>
                   </div>
                   <div>
+                    <div style={{ fontSize: 10, color: C.dim }}>BALANCE ({qc})</div>
+                    <div>{open ? fmtSigned(r.netQuoteCash, 0) : "—"}</div>
+                  </div>
+                  <div>
                     <div style={{ fontSize: 10, color: C.dim }}>AVG COST</div>
                     <div>{open ? fmt(r.avgCost, 4) : "—"}</div>
                   </div>
+                  <div />
                   <div>
                     <div style={{ fontSize: 10, color: C.dim }}>SPOT</div>
                     <input
