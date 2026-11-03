@@ -87,10 +87,10 @@
   resolved "https://registry.yarnpkg.com/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz#e3fcee093fbb5ce765e1ad088ff4de2889f6f9be"
   integrity sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==
 
-"@vitejs/plugin-react@^6.0.3":
-  version "6.0.3"
-  resolved "https://registry.yarnpkg.com/@vitejs/plugin-react/-/plugin-react-6.0.3.tgz#55f1d7f558534d10aef03c007dc208b7c3771ce4"
-  integrity sha512-vmFvco5/QuC2f9Oj+wTk0+9XeDFkHxSamwZKYc7MxYwKICfvUvlMhqKI0VuICPltGqh1neqBKDvO4kes1ya8vg==
+"@vitejs/plugin-react@^6.1.2":
+  version "6.1.2"
+  resolved "https://registry.yarnpkg.com/@vitejs/plugin-react/-/plugin-react-6.1.2.tgz#924d47e890a78cdf2b72f3f41fe8ab98e089b81e"
+  integrity sha512-fhJNGUdscQa4HkI0xFxwonWyhnVReCPDbXI7FH7jmzpnVCrFQI7PRrhWecO263610vOrs9tr2Y4xcf8uAdFxbw==
   dependencies:
     "@rolldown/pluginutils" "^1.0.1"
 
